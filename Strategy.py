@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 from scipy.stats import linregress
 from dateutil.parser import parse
-from BackTest.Position import *
-from BackTest.Order import *
+import datetime
+from Position import *
+from Order import *
 import numpy as np
+import talib
 
 
 class Parameters(object):
@@ -32,6 +34,13 @@ class StrategyArbitrage(object):
     BUY_SIGNAL = 1  # 套利买单信号
     SELL_SIGNAL = -1    # 套利卖单信号
     NO_ARBITRAGE_SIGNAL = 0    # 无套利信号
+
+    TIME_TRADE1 = [parse('9:05:00').time(), parse('10:14:30').time()]
+    TIME_TRADE2 = [parse('10:31:00').time(), parse('11:29:30').time()]
+    TIME_TRADE3 = [parse('13:31:00').time(), parse('15:29:30').time()]
+    TIME_TRADE4 = [parse('21:00:30').time(), parse('23:29:30').time()]
+
+    DELTA_TIME = datetime.timedelta(hours=100)
 
     def __init__(self, strategy_id, parameter, symbol):
         """
@@ -67,7 +76,6 @@ class StrategyArbitrage(object):
         :return:
         """
         if data.symbol_name == self.symbol.symbol_name[0]:
-            self.time = parse(data.date_time)
             self.ask1 = data.AskPrice
             self.ask1_volume = data.AskVolume
             self.bid1 = data.BidPrice
@@ -79,9 +87,9 @@ class StrategyArbitrage(object):
             self.ask2 = data.AskPrice
             self.ask2_volume = data.AskVolume
             self.bid2 = data.BidPrice
-            self.time = parse(data.date_time)
             self.bid2_volume = data.BidVolume
             self.price2.append(data.Price)
+        self.time = data.date_time
 
     def cal_indicator(self):
         """
@@ -126,17 +134,16 @@ class StrategyArbitrage(object):
             return False
 
         # 不在共同交易时间内的不允许交易，可根据需要更改
-        time_trade1 = parse('9:05:00').time() < self.time.time() < parse('10:14:30').time()
-        time_trade2 = parse('10:31:00').time() < self.time.time() < parse('11:29:30').time()
-        time_trade3 = parse('13:31:00').time() < self.time.time() < parse('15:29:30').time()
-        time_trade4 = parse('21:00:30').time() < self.time.time() < parse('23:29:30').time()
+        # time_trade1 = parse('9:05:00').time() < self.time.time() < parse('10:14:30').time()
+        # time_trade2 = parse('10:31:00').time() < self.time.time() < parse('11:29:30').time()
+        # time_trade3 = parse('13:31:00').time() < self.time.time() < parse('15:29:30').time()
+        # time_trade4 = parse('21:00:30').time() < self.time.time() < parse('23:29:30').time()
+        time_trade1 = self.TIME_TRADE1[0] < self.time.time() < self.TIME_TRADE1[1]
+        time_trade2 = self.TIME_TRADE2[0] < self.time.time() < self.TIME_TRADE2[1]
+        time_trade3 = self.TIME_TRADE3[0] < self.time.time() < self.TIME_TRADE3[1]
+        time_trade4 = self.TIME_TRADE4[0] < self.time.time() < self.TIME_TRADE4[1]
         bool_time_trade = time_trade1 or time_trade2 or time_trade3 or time_trade4
         if not bool_time_trade:
-            return False
-
-        # 涨跌停不允许交易,涨跌停的数据需要进一步考证:当前基于ask_volume，bid_volume的价格为0进行判断
-        if self.ask1_volume == 0 or self.ask2_volume == 0 or self.bid1_volume == 0 or self.bid2_volume == 0:
-            print('涨跌停:', self.time)
             return False
 
         return True
@@ -152,83 +159,218 @@ class StrategyArbitrage(object):
                 保证金变化
         :return:
         """
-        # 仓位为空,无需平仓
-        if self.position.order_set.is_empty():
-            return False
+        # 仓位中属于当前的订单列表
+        orders = self.position.order_set.get_orders(self.id)
 
-        # 获取平仓订单集合
-        for order in self.position.order_set.orders:  # 遍历当前策略的仓位的所有订单
-            if order.strategy_id != self.id:    # 订单不对应当前策略，跳过
-                continue
-            # 买单平仓条件
+        # 当前策略仓位为空,无需平仓
+        if len(orders) == 0:
+            return
+
+        # 遍历当前仓位的属于该策略的所有订单
+        for order in orders:
+            # 更新订单信息
             if order.type == OrderPairs.ORDER_TYPE_BUY:
-                order.update(close_price=[self.bid1, self.ask2], close_time=self.time)  # 订单更新
-
-                # 获利-手续费 超过给定阈值:进行平仓
-                if order.profit > self.parameter.take_profit:
-                    self.position.account.update(profit_increased=order.profit,
-                                                 margin_increased=-order.margin[0],   # 上一个tick下的保证金
-                                                 event_type=Account.EVENT_TYPE_CLOSE)     # 账户资金更新
-                    self.position.order_set.remove(order)     # 仓位的订单移除
-                    print('close_buy at strategy:', self.id, self.time, (self.bid1, self.ask2), order.profit)
-                else:
-                    self.position.account.update(profit_increased=order.profit,
-                                                 margin_increased=order.margin[1]-order.margin[0],  # 当前tick和上次tick的保证金差
-                                                 event_type=Account.EVENT_TYPE_TICK_CHANGE)
+                order.update(close_price=[self.bid1, self.ask2], close_time=self.time)
+            elif order.type == OrderPairs.ORDER_TYPE_SELL:
+                order.update(close_price=[self.ask1, self.bid2], close_time=self.time)
+            else:
                 continue
+            # 判断是否满足订单平仓条件，满足条件则进行平仓
+            if self.close_condition(order):
+                self.close_order(order)
+                print('close order at strategy:', self.id, self.time, order.close_price, order.profit)
+                print('equity:', self.position.account.equity)
+            else:
+                self.position.account.update(profit_increased=order.profit,
+                                             margin_increased=order.margin[1]-order.margin[0],  # 当前tick和上次tick的保证金差
+                                             event_type=Account.EVENT_TYPE_TICK_CHANGE)
+            continue
+        return
 
-            # 卖单
-            if order.type == OrderPairs.ORDER_TYPE_SELL:
-                order.update(close_price=[self.ask1, self.bid2], close_time=self.time)    # 更新订单信息
+    def close_condition(self, order):
+        # 盈利达到一定程度，平仓
+        if order.profit > self.parameter.take_profit:
+            return True
+        if order.close_time - order.open_time > self.DELTA_TIME:
+            return True
+        return False
 
-                # 满足卖单平仓条件,进行平仓
-                if order.profit > self.parameter.take_profit:
-                    self.position.account.update(profit_increased=order.profit,
-                                                 margin_increased=-order.margin[0],   # 平仓时，将上一次tick下的保证金释放
-                                                 event_type=Account.EVENT_TYPE_CLOSE)
-                    self.position.order_set.remove(order)
-                    print('close_sell at strategy:', self.id, self.time, tuple(order.close_price), order.profit)
-                else:
-                    self.position.account.update(profit_increased=order.profit,
-                                                 margin_increased=order.margin[1]-order.margin[0],
-                                                 event_type=Account.EVENT_TYPE_TICK_CHANGE)
-                continue
-        return True
+    def close_order(self, order):
+        # 账户资金更新
+        self.position.account.update(profit_increased=order.profit,
+                                     margin_increased=-order.margin[0],  # 上一个tick下的保证金
+                                     event_type=Account.EVENT_TYPE_CLOSE)  # 账户资金更新
+        # 持仓列表更新
+        self.position.order_set.remove(order)  # 仓位的订单移除
 
     def check_open_condition(self):
+        if self.open_condition():
+            if self.res_flag == self.BUY_SIGNAL:
+                order = OrderPairs(open_prices=(self.ask1, self.bid2),
+                                   open_time=self.time,
+                                   symbols=self.symbol,
+                                   lots=1,
+                                   strategy_id=self.id,
+                                   order_type=OrderPairs.ORDER_TYPE_BUY)   # 开多头订单
+            elif self.res_flag == self.SELL_SIGNAL:
+                order = OrderPairs(open_prices=(self.bid1, self.ask2),
+                                   open_time=self.time,
+                                   symbols=self.symbol,
+                                   lots=1,
+                                   strategy_id=self.id,
+                                   order_type=OrderPairs.ORDER_TYPE_SELL)  # 开空头订单
+            self.open_order(order)
+
+    def open_condition(self):
         # 当前策略持仓， 不进行开仓
         if not self.position.order_set.is_empty(strategy_id=self.id):
             return False
-
-        # 存在套利机会则进行开仓
-        if self.res_flag == self.BUY_SIGNAL:
-            print('open_buy_order at strategy:', self.id, self.time, (self.ask1, self.bid2))
-            open_order = OrderPairs(open_prices=(self.ask1, self.bid2),
-                                    open_time=self.time,
-                                    symbols=self.symbol,
-                                    lots=1,
-                                    strategy_id=self.id,
-                                    order_type=OrderPairs.ORDER_TYPE_BUY)   # 开多头订单
-
-            self.position.account.update(profit_increased=-open_order.commission[0],
-                                         margin_increased=open_order.margin[0],
-                                         event_type=Account.EVENT_TYPE_OPEN)
-            self.position.order_set.add(open_order)
-
-        if self.res_flag == self.SELL_SIGNAL:
-            print('open_sell_order at strategy:', self.id, self.time, (self.bid1, self.ask2))
-            open_order = OrderPairs(open_prices=(self.bid1, self.ask2),
-                                    open_time=self.time,
-                                    symbols=self.symbol,
-                                    lots=1,
-                                    strategy_id=self.id,
-                                    order_type=OrderPairs.ORDER_TYPE_SELL)  # 开空头订单
-            self.position.account.update(profit_increased=-open_order.commission[0],
-                                         margin_increased=open_order.margin[0],
-                                         event_type=Account.EVENT_TYPE_OPEN)
-            self.position.order_set.add(open_order)
+        # 不存在套利则不开仓
+        if self.res_flag == self.NO_ARBITRAGE_SIGNAL:
+            return False
         return True
 
+    def open_order(self, order):
+        self.position.account.update(profit_increased=-order.commission[0],
+                                     margin_increased=order.margin[0],
+                                     event_type=Account.EVENT_TYPE_OPEN)
+        self.position.order_set.add(order)
+        print('open_order at strategy:', self.id, self.time, order.open_price)
+        print('equity:', self.position.account.equity)
+
+
+class StrategyBoll:
+    """
+    布林带寻找趋势突破
+    """
+    OPEN_BUY_SIGNAL = 0
+    OPEN_SELL_SIGNAL = 1
+    CLOSE_BUY_SIGNAL = 2
+    CLOSE_SELL_SIGNAL = 3
+
+    def __init__(self, strategy_id, parameter, symbol):
+        """
+
+        :param strategy_id:
+        :param parameter:
+        :param symbol:
+        """
+        # 初始化策略信息
+        self.id = strategy_id
+        self.parameter = parameter
+        self.symbol = symbol
+        # 策略运行中保存
+        self.time = ''
+        self.price = deque(maxlen=parameter.tau)
+        self.flag = None
+        self.position = Position()
+
+    def update_data(self, data):
+        self.price.append(data.Price)
+        self.time = data.date_time
+
+    def cal_indicator(self):
+        mean = np.mean(np.array(self.price))
+        sigma = np.std(np.array(self.price))
+        if self.price[-1] > mean + self.parameter.delta*sigma:  # 突破上轨,买信号
+            self.flag = self.OPEN_BUY_SIGNAL
+        elif self.price[-1] < mean - self.parameter.delta*sigma:   # 突破下轨，卖信号
+            self.flag = self.OPEN_SELL_SIGNAL
+        elif self.price[-1] < mean:     # 下穿中轨，平买信号
+            self.flag = self.CLOSE_BUY_SIGNAL
+        else:   # 上穿中轨，平卖信号
+            self.flag = self.CLOSE_SELL_SIGNAL
+
+    def allow_transaction(self):
+        return len(self.price) >= self.parameter.tau
+
+    def close_condition(self, order):
+        if order.profit > self.parameter.take_profit:
+            return True
+        # if order.profit < -500:
+        #     return True
+        if order.cal_hold_time() > datetime.timedelta(days=self.parameter.stop_days):
+            return True
+        # if order.type == Order.ORDER_TYPE_BUY and \
+        #         (self.flag == self.OPEN_SELL_SIGNAL or self.flag == self.CLOSE_BUY_SIGNAL):
+        #     return True
+        # if order.type == Order.ORDER_TYPE_SELL and \
+        #         (self.flag == self.OPEN_BUY_SIGNAL or self.flag == self.CLOSE_SELL_SIGNAL):
+        #     return True
+        return False
+
+    def close_order(self, order):
+        self.position.account.update(profit_increased=order.profit,
+                                     margin_increased=-order.margin[0],  # 上一个tick下的保证金
+                                     event_type=Account.EVENT_TYPE_CLOSE)  # 账户资金更新
+        # 持仓列表更新
+        self.position.order_set.remove(order)  # 仓位的订单移除
+
+    def check_close_condition(self):
+        orders = self.position.order_set.get_orders(self.id)
+
+        if len(orders) == 0:
+            return
+
+        for order in orders:
+            if order.type == Order.ORDER_TYPE_BUY:
+                order.update(close_price=self.price[-1]-self.symbol.slip_point, close_time=self.time)
+            else:
+                order.update(close_price=self.price[-1]+self.symbol.slip_point, close_time=self.time)
+        if self.close_condition(order):
+            self.close_order(order)
+            print('close order at strategy:', self.id, self.time, order.close_price, order.profit)
+            print('equity:', self.position.account.equity)
+        else:
+            self.position.account.update(profit_increased=order.profit,
+                                         margin_increased=order.margin[1]-order.margin[0],  # 当前tick和上次tick的保证金差
+                                         event_type=Account.EVENT_TYPE_TICK_CHANGE)
+
+    def check_open_condition(self):
+        if self.open_condition():
+            if self.flag == self.OPEN_BUY_SIGNAL:
+                order = Order(open_time=self.time,
+                              open_price=self.price[-1]+self.symbol.slip_point,
+                              symbol=self.symbol,
+                              order_type=Order.ORDER_TYPE_BUY,
+                              lots=1,
+                              strategy_id=self.id)
+            else:
+                order = Order(open_time=self.time,
+                              open_price=self.price[-1]-self.symbol.slip_point,
+                              symbol=self.symbol,
+                              order_type=Order.ORDER_TYPE_SELL,
+                              lots=1,
+                              strategy_id=self.id)
+            self.open_order(order)
+
+    def open_condition(self):
+        if not self.position.order_set.is_empty(strategy_id=self.id):
+            return False
+        if self.flag == self.OPEN_BUY_SIGNAL or self.flag == self.OPEN_SELL_SIGNAL:
+            return True
+        return False
+
+    def open_order(self, order):
+        self.position.account.update(profit_increased=-order.commission[0],
+                                     margin_increased=order.margin[0],
+                                     event_type=Account.EVENT_TYPE_OPEN)
+        self.position.order_set.add(order)
+        print('open_order at strategy:', self.id, self.time, order.open_price)
+        print('equity:', self.position.account.equity)
+
+    def on_tick(self, data, position=None):
+        self.update_data(data)
+        self.position = position
+
+        if not self.allow_transaction():
+            return
+
+        self.cal_indicator()
+
+        self.check_close_condition()
+
+        self.check_open_condition()
 
 
 

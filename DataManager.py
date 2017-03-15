@@ -1,5 +1,6 @@
 import pandas as pd
 import datetime
+import os
 
 
 def tick_prepare(file_name='i1701-DCE.csv',
@@ -31,27 +32,37 @@ def tick_merge(tick_data_list, flag_list=None):
     return data_concat
 
 
-def get_tick_data(tick_path='F:\\FuturesFiles\\tick_data_prepare\\',
-                  file_name=('i1701-DCE.csv', 'rb1701-SHF.csv')):
-    data1 = pd.read_csv(tick_path + tick_file1, index_col='date_time',
-                        usecols=['date_time', 'Price', 'AskPrice', 'BidPrice', 'AskVolume', 'BidVolume'])
-    data2 = pd.read_csv(tick_prepare_path + tick_file2, index_col='date_time',
-                        usecols=['date_time', 'Price', 'AskPrice', 'BidPrice', 'AskVolume', 'BidVolume'])
-    data_merge = tick_merge([data1, data2], flag_list=file_name)
-    return data_merge
-
 if __name__ == '__main__':
     tick_origin_path = 'F:\\FuturesFiles\\tick_data\\'
     tick_prepare_path = 'F:\\FuturesFiles\\tick_data_prepare\\'
-    tick_file1 = 'i1701-DCE.csv'
-    tick_file2 = 'rb1701-SHF.csv'
+    tick_data_flow_path = 'F:\\FuturesFiles\\tick_data_flow\\'
+
+    # 1.预处理tick数据
+    # file_origin_name = os.listdir(tick_origin_path)
+    # for file in file_origin_name:
+    #     tick_prepare(file_name=file, file_path=tick_origin_path, w_path=tick_prepare_path)
+
+    # 2.选取回测的品种数据合并
+    choose_symbol = ['i1701-DCE', 'rb1701-SHF', 'i1702-DCE', 'rb1702-SHF']
+    file_name = '_'.join(choose_symbol)
+    choose_file_path = [tick_prepare_path + symbol + '.csv' for symbol in choose_symbol]
+    choose_columns = ['date_time', 'Price', 'AskPrice', 'AskVolume', 'BidPrice', 'BidVolume']
+    data_list = [pd.read_csv(cfp, usecols=choose_columns).set_index('date_time') for cfp in choose_file_path]
+    print('data read complete!')
+    data_merge = tick_merge(data_list, flag_list=choose_symbol)
+    print('data merge complete!')
+    data_merge.to_csv(tick_data_flow_path + file_name+'.csv')
+    print('data to csv complete!')
+
+    # tick_file1 = 'i1701-DCE.csv'
+    # tick_file2 = 'rb1701-SHF.csv'
 
     # tick数据的预处理
     # tick_prepare(tick_file1, file_path=tick_origin_path, w_path=tick_prepare_path)
     # tick_prepare(tick_file2, file_path=tick_origin_path, w_path=tick_prepare_path)
 
     # tick数据合并
-    data = get_tick_data()
-    data.to_csv('i1701_rb1701.csv')
+    # data = get_tick_data()
+    # data.to_csv('i1701_rb1701.csv')
 
 
