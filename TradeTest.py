@@ -68,7 +68,7 @@ class BarTradeTest:
                 if row.symbol_name == s.symbol.symbol_name:
                     s.on_tick(row, position=self.position)
             self.account_dict.append(dict(copy.deepcopy(self.position.account.__dict__), **{'time': row.date_time}))
-        print('equity at last:', self.position.account.equity)
+        # print('equity at last:', self.position.account.equity)
 
     def result_analysis(self):
         res_account = pd.DataFrame(self.account_dict).set_index('time')
@@ -135,7 +135,7 @@ def test_trend():
     print(data.head())
 
     symbol = Symbol('RB-MainForce')
-    p1 = Parameters({'tau': 120, 'delta': 2})
+    p1 = Parameters({'tau': 90, 'delta': 3.0, 'take_profit': 3450, 'stop_days': 11})
     s1 = StrategyBoll(strategy_id=1, parameter=p1, symbol=symbol)
     my_account = Account(initial_capital=100000)
     my_orders = OrderList(orders=[])

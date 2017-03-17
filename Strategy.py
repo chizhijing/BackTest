@@ -272,6 +272,7 @@ class StrategyBoll:
     def cal_indicator(self):
         mean = np.mean(np.array(self.price))
         sigma = np.std(np.array(self.price))
+        # print(self.price)
         if self.price[-1] > mean + self.parameter.delta*sigma:  # 突破上轨,买信号
             self.flag = self.OPEN_BUY_SIGNAL
         elif self.price[-1] < mean - self.parameter.delta*sigma:   # 突破下轨，卖信号
@@ -319,8 +320,8 @@ class StrategyBoll:
                 order.update(close_price=self.price[-1]+self.symbol.slip_point, close_time=self.time)
         if self.close_condition(order):
             self.close_order(order)
-            print('close order at strategy:', self.id, self.time, order.close_price, order.profit)
-            print('equity:', self.position.account.equity)
+            # print('close order at strategy:', self.id, self.time, order.close_price, order.profit)
+            # print('equity:', self.position.account.equity)
         else:
             self.position.account.update(profit_increased=order.profit,
                                          margin_increased=order.margin[1]-order.margin[0],  # 当前tick和上次tick的保证金差
@@ -356,8 +357,8 @@ class StrategyBoll:
                                      margin_increased=order.margin[0],
                                      event_type=Account.EVENT_TYPE_OPEN)
         self.position.order_set.add(order)
-        print('open_order at strategy:', self.id, self.time, order.open_price)
-        print('equity:', self.position.account.equity)
+        # print('open_order at strategy:', self.id, self.time, order.open_price)
+        # print('equity:', self.position.account.equity)
 
     def on_tick(self, data, position=None):
         self.update_data(data)
