@@ -14,15 +14,7 @@ def evalOneMax(individual):
     return sum(individual),
 
 
-def main():
-    random.seed(64)
-    return pop, log, hof
-
-def pool_test(toolbox,):
-    pass
-
 if __name__ == "__main__":
-
 
     creator.create("FitnessMax", base.Fitness, weights=(1.0,))
     creator.create("Individual", array.array, typecode='b', fitness=creator.FitnessMax)
